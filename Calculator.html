@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Calculator</title>
+<style>
+:root{--bg:#eef1f4;--panel:#fff;--key:#e6eaef;--key-op:#d3dde8;--ink:#14202b;--mute:#6b7886;--accent:#0f6e5a;--accent-ink:#fff;--line:#d5dbe2;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12181e;--panel:#1b232b;--key:#27313b;--key-op:#33414f;--ink:#eaf0f5;--mute:#8d9aa7;--accent:#2fb596;--accent-ink:#06231c;--line:#2f3a45;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#12181e;--panel:#1b232b;--key:#27313b;--key-op:#33414f;--ink:#eaf0f5;--mute:#8d9aa7;--accent:#2fb596;--accent-ink:#06231c;--line:#2f3a45;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;justify-content:center;padding:16px}
+.app{width:100%;max-width:380px;display:flex;flex-direction:column;gap:12px}
+.screen{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;min-height:112px;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-end;gap:4px;overflow:hidden}
+.expr{font-size:1.25rem;color:var(--mute);word-break:break-all;text-align:right;min-height:1.6em;font-variant-numeric:tabular-nums}
+.res{font-size:2.4rem;font-weight:600;font-variant-numeric:tabular-nums;text-align:right;word-break:break-all;line-height:1.15;min-height:1.15em}
+.res.err{font-size:1.1rem;color:#c0392b;font-weight:500}
+.keys{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+button{font:inherit;font-size:1.25rem;border:0;border-radius:10px;background:var(--key);color:var(--ink);padding:0;height:56px;cursor:pointer;touch-action:manipulation}
+button:active{filter:brightness(.92)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.op{background:var(--key-op)}
+button.eq{background:var(--accent);color:var(--accent-ink);font-weight:600}
+button.clr{color:#c0392b}
+.hist{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+.hist h2{font-size:.9rem;margin:0 0 6px;font-weight:600;color:var(--mute);display:flex;justify-content:space-between;align-items:center}
+.hist h2 button{height:auto;font-size:.85rem;background:none;color:var(--accent);padding:2px 4px}
+.hist ul{list-style:none;margin:0;padding:0;max-height:150px;overflow-y:auto}
+.hist li{display:flex;justify-content:space-between;gap:12px;padding:6px 4px;border-top:1px solid var(--line);cursor:pointer;font-variant-numeric:tabular-nums;font-size:.95rem}
+.hist li:first-child{border-top:0}
+.hist li span:first-child{color:var(--mute);overflow-wrap:anywhere}
+.hist li span:last-child{font-weight:600;white-space:nowrap}
+.empty{color:var(--mute);font-size:.9rem;padding:4px}
+</style>
+</head>
+<body>
+<main class="app">
+  <div class="screen" aria-live="polite">
+    <div class="expr" id="expr"></div>
+    <div class="res" id="res">0</div>
+  </div>
+  <div class="keys" id="keys"></div>
+  <section class="hist">
+    <h2>History <button id="clearHist" type="button">Clear history</button></h2>
+    <ul id="hist"></ul>
+  </section>
+</main>
+<script>
+(function(){
+  var layout=[
+    ['C','clr'],['⌫','op'],['(','op'],[')','op'],
+    ['√(','op'],['^','op'],['%','op'],['÷','op'],
+    ['7'],['8'],['9'],['×','op'],
+    ['4'],['5'],['6'],['−','op'],
+    ['1'],['2'],['3'],['+','op'],
+    ['0'],['.'],['Ans','op'],['=','eq']
+  ];
+  var exprEl=document.getElementById('expr'),resEl=document.getElementById('res'),
+      keysEl=document.getElementById('keys'),histEl=document.getElementById('hist');
+  var expr='',lastAns='',history=[],justEvaluated=false;
+
+  layout.forEach(function(k){
+    var b=document.createElement('button');
+    b.type='button';b.textContent=k[0];b.setAttribute('data-k',k[0]);
+    if(k[1])b.className=k[1];
+    keysEl.appendChild(b);
+  });
+  keysEl.addEventListener('click',function(e){
+    var k=e.target.getAttribute&&e.target.getAttribute('data-k');
+    if(k)press(k);
+  });
+
+  function toAscii(s){return s.replace(/×/g,'*').replace(/÷/g,'/').replace(/−/g,'-').replace(/√/g,'sqrt');}
+
+  // Recursive-descent parser (no eval)
+  function evaluate(src){
+    var s=toAscii(src).replace(/\s+/g,''),i=0;
+    function peek(){return s[i];}
+    function fail(m){throw new Error(m||'Check the expression');}
+    function num(){
+      var m=/^\d*\.?\d+(e[+-]?\d+)?|^\d+\.?/i.exec(s.slice(i));
+      if(!m)fail();i+=m[0].length;return parseFloat(m[0]);
+    }
+    function primary(){
+      var c=peek();
+      if(c==='('){i++;var v=expr_();if(peek()!==')')fail('Missing closing bracket');i++;return v;}
+      if(s.slice(i,i+5)==='sqrt('){i+=5;var r=expr_();if(peek()!==')')fail('Missing closing bracket');i++;if(r<0)fail('Square root of a negative number');return Math.sqrt(r);}
+      return num();
+    }
+    function postfix(){var v=primary();while(peek()==='%'){i++;v=v/100;}return v;}
+    function power(){var b=postfix();if(peek()==='^'){i++;return Math.pow(b,unary());}return b;}
+    function unary(){
+      if(peek()==='-'){i++;return -unary();}
+      if(peek()==='+'){i++;return unary();}
+      return power();
+    }
+    function term(){
+      var v=unary();
+      while(peek()==='*'||peek()==='/'){
+        var o=s[i++],r=unary();
+        if(o==='/'){if(r===0)fail('Cannot divide by zero');v=v/r;}else v=v*r;
+      }
+      return v;
+    }
+    function expr_(){
+      var v=term();
+      while(peek()==='+'||peek()==='-'){var o=s[i++],r=term();v=o==='+'?v+r:v-r;}
+      return v;
+    }
+    if(!s)fail('');
+    var out=expr_();
+    if(i<s.length)fail();
+    if(!isFinite(out))fail('Result is too large');
+    return out;
+  }
+
+  function fmt(n){
+    var r=parseFloat(n.toPrecision(12));
+    if(Math.abs(r)>=1e15||(Math.abs(r)<1e-9&&r!==0))return r.toExponential(6).replace(/\.?0+e/,'e');
+    var p=String(r).split('.');
+    p[0]=p[0].replace(/\B(?=(\d{3})+(?!\d))/g,',');
+    return p.join('.');
+  }
+  function raw(n){return String(parseFloat(n.toPrecision(12)));}
+
+  function preview(){
+    exprEl.textContent=expr;
+    resEl.className='res';
+    if(!expr){resEl.textContent='0';return;}
+    try{resEl.textContent=fmt(evaluate(expr));}
+    catch(e){/* keep last good preview while typing */}
+  }
+
+  function press(k){
+    resEl.className='res';
+    var isOp=['+','−','×','÷','^','%'].indexOf(k)>-1;
+    if(k==='C'){expr='';justEvaluated=false;preview();resEl.textContent='0';return;}
+    if(k==='⌫'){
+      if(justEvaluated){expr='';justEvaluated=false;}
+      else if(expr.slice(-2)==='√(')expr=expr.slice(0,-2);
+      else expr=expr.slice(0,-1);
+      preview();if(!expr)resEl.textContent='0';return;
+    }
+    if(k==='='){
+      if(!expr)return;
+      try{
+        var v=evaluate(expr);
+        history.unshift({e:expr,r:raw(v),d:fmt(v)});
+        if(history.length>15)history.pop();
+        lastAns=raw(v);
+        exprEl.textContent=expr+' =';
+        resEl.textContent=fmt(v);
+        expr=lastAns;justEvaluated=true;
+        renderHist();
+      }catch(e){
+        resEl.textContent=e.message||'Check the expression';resEl.className='res err';
+      }
+      return;
+    }
+    if(k==='Ans'){
+      if(!lastAns)return;
+      if(justEvaluated){expr='';justEvaluated=false;}
+      expr+=lastAns;preview();return;
+    }
+    if(justEvaluated){
+      // continuing after a result: operators extend it, anything else starts fresh
+      if(!isOp)expr='';
+      justEvaluated=false;
+    }
+    if(isOp&&k!=='%'&&!expr&&k!=='−')return;
+    if(isOp&&k!=='%'&&/[+−×÷^]$/.test(expr)&&!(k==='−'&&/[×÷^]$/.test(expr)))expr=expr.slice(0,-1);
+    expr+=k;
+    preview();
+  }
+
+  function renderHist(){
+    histEl.innerHTML='';
+    if(!history.length){var li=document.createElement('li');li.className='empty';li.style.cursor='default';li.textContent='Results you calculate will appear here.';histEl.appendChild(li);return;}
+    history.forEach(function(h){
+      var li=document.createElement('li');
+      var a=document.createElement('span');a.textContent=h.e;
+      var b=document.createElement('span');b.textContent='= '+h.d;
+      li.appendChild(a);li.appendChild(b);
+      li.title='Use this result';
+      li.addEventListener('click',function(){
+        if(justEvaluated)expr='';justEvaluated=false;
+        expr+=h.r;preview();
+      });
+      histEl.appendChild(li);
+    });
+  }
+  document.getElementById('clearHist').addEventListener('click',function(){history=[];renderHist();});
+
+  document.addEventListener('keydown',function(e){
+    if(e.ctrlKey||e.metaKey||e.altKey)return;
+    var k=e.key;
+    if(/^[0-9.]$/.test(k))press(k);
+    else if(k==='+')press('+');
+    else if(k==='-')press('−');
+    else if(k==='*'||k==='x'||k==='X')press('×');
+    else if(k==='/'){e.preventDefault();press('÷');}
+    else if(k==='^')press('^');
+    else if(k==='%')press('%');
+    else if(k==='('||k===')')press(k);
+    else if(k==='Enter'||k==='='){e.preventDefault();press('=');}
+    else if(k==='Backspace')press('⌫');
+    else if(k==='Escape'||k==='Delete')press('C');
+    else return;
+  });
+  renderHist();
+})();
+</script>
+</body>
+</html>
